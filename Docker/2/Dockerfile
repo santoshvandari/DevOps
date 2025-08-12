@@ -6,6 +6,6 @@ COPY . .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-EXPOSE 5000
+EXPOSE 8080
 
-CMD ["gunicorn","-w","3","-b","0.0.0.0:5000","app:app"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080","--workers","4"]
