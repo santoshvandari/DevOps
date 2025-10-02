@@ -653,6 +653,8 @@ docker logs <container-id>
 
 # Check container configuration
 docker inspect <container-id>
+or docker inspect <container-name>
+
 
 # Try running interactively
 docker run -it myimage /bin/bash
