@@ -1,0 +1,65 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+
+jobs:
+  deploy:
+    # Only run if PR was merged or direct push to main
+    if: github.event_name == 'push' || (github.event.pull_request.merged == true)
+    
+    runs-on: ubuntu-latest
+    
+    environment:
+      name: production
+      url: https://your-app.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js (if needed)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Install dependencies (if needed)
+        run: |
+          if [ -f "package.json" ]; then
+            npm ci
+          fi
+      
+      - name: Build application (if needed)
+        run: |
+          if [ -f "package.json" ] && npm run | grep -q "build"; then
+            npm run build
+          fi
+      
+      - name: Make deployment script executable
+        run: chmod +x script.sh
+      
+      - name: Run deployment script
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: ./script.sh
+      
+      - name: Deployment status
+        if: success()
+        run: |
+          echo "✅ Deployment successful!"
+          echo "Deployed to production at $(date)"
+      
+      - name: Deployment failed
+        if: failure()
+        run: |
+          echo "❌ Deployment failed!"
+          echo "Please check the logs for errors."
