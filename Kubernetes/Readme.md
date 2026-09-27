@@ -581,42 +581,110 @@ spec:
 ```
 
 ### Horizontal Pod Autoscaler (HPA)
+
+A Horizontal Pod Autoscaler adjusts the replica count of a Deployment, StatefulSet, or another scalable workload in response to observed metrics. HPA is a control loop: it checks metrics periodically and scales within the minimum and maximum replica counts you configure.
+
+#### Prerequisites
+
+- Install and configure a metrics source. For CPU and memory resource metrics, clusters commonly use Metrics Server; check that `kubectl top pods` returns values.
+- Set resource requests on the workload's containers. HPA calculates CPU or memory utilization as a percentage of those requests. If requests are missing, utilization cannot be calculated for that metric.
+- Keep the workload's own replica setting in mind: after HPA is created, it manages the target's replica count.
+
+For a `Utilization` target, Kubernetes compares observed usage with the requested CPU or memory. For example, a 60% CPU target means the average CPU use should stay near 60% of the CPU requests across the target pods. Requests must be present on every container included in that metric; otherwise, HPA may be unable to calculate utilization.
+
+```yaml
+# Example container resources in the Deployment pod template
+resources:
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+```
+
 ```bash
-# Create HPA
-kubectl autoscale deployment nginx --cpu-percent=50 --min=1 --max=10
+# Check that the resource metrics API is available
+kubectl top pods
+kubectl get apiservice v1beta1.metrics.k8s.io
+```
 
-# View HPA
+#### Create an HPA from the command line
+
+```bash
+# Keep average CPU utilization near 60%, with 2 to 10 replicas
+kubectl autoscale deployment web --cpu-percent=60 --min=2 --max=10
+
+# Inspect the autoscaler and its recent decisions
 kubectl get hpa
-kubectl describe hpa nginx
+kubectl describe hpa web
+kubectl get hpa web --watch
+```
 
-# HPA YAML manifest
-kubectl apply -f - <<EOF
+#### Define an HPA with YAML
+
+This example targets a Deployment named `web`. Its containers need CPU requests for the utilization target to work:
+
+```yaml
+# hpa.yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: webapp-hpa
+  name: web-hpa
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: webapp
+    name: web
   minReplicas: 2
   maxReplicas: 10
   metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
-EOF
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
 ```
+
+Apply and inspect the HPA:
+
+```bash
+kubectl apply -f hpa.yaml
+kubectl get hpa web-hpa --watch
+kubectl describe hpa web-hpa
+kubectl get deployment web
+```
+
+When multiple metrics are configured, HPA evaluates each and uses the metric that recommends the most replicas. This helps avoid scaling down when one metric still indicates demand. The optional `behavior` settings let you control scaling speed and stabilization; the example waits for lower demand to remain stable before scaling down. HPA changes the number of pod replicas, while a separate node autoscaler may be needed to add cluster nodes if there is not enough capacity to schedule those pods.
+
+#### Troubleshoot HPA
+
+```bash
+# Review current and target metrics, replica counts, and warning events
+kubectl describe hpa web-hpa
+
+# Check whether pod metrics are available
+kubectl top pods
+kubectl get apiservice v1beta1.metrics.k8s.io
+
+# Check workload resource requests and pod status
+kubectl describe deployment web
+kubectl get pods -l app=web
+```
+
+If the HPA shows `<unknown>` metrics, check the metrics source and ensure every relevant container has a resource request for the metric. HPA adjusts pod count; it does not add node capacity, so a cluster may also need a node autoscaler if new pods cannot be scheduled.
+
+For details, see the Kubernetes documentation on [Horizontal Pod Autoscaling](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/) and [resource metrics](https://kubernetes.io/docs/tasks/debug/debug-cluster/resource-metrics-pipeline/).
 
 ## Troubleshooting and Debugging
 
@@ -761,6 +829,140 @@ spec:
     - protocol: TCP
       port: 8080
 ```
+
+## Kustomize
+
+Kustomize customizes Kubernetes YAML declaratively without requiring a templating language. A directory containing a `kustomization.yaml` (also commonly named `kustomization.yml` or `Kustomization`) defines the resources and transformations to build. `kubectl` supports Kustomize directly through the `-k` flag.
+
+### Basic Kustomization
+
+Keep the original manifests as resources, then define shared changes in `kustomization.yaml`:
+
+```yaml
+# kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - service.yaml
+namespace: development
+commonLabels:
+  app: web
+```
+
+Build the combined output, preview the changes, or apply it to the current cluster context:
+
+```bash
+# Render the customized manifests locally
+kubectl kustomize ./k8s
+
+# Preview changes against the cluster
+kubectl diff -k ./k8s
+
+# Apply or remove the resources
+kubectl apply -k ./k8s
+kubectl delete -k ./k8s
+```
+
+### Generate ConfigMaps and Secrets
+
+Kustomize can create ConfigMaps and Secrets from literals or files. Kubernetes references to generated resources are updated when Kustomize adds a content hash to their names, so a changed configuration can trigger a rollout.
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+configMapGenerator:
+  - name: app-config
+    literals:
+      - LOG_LEVEL=info
+    files:
+      - app.properties
+secretGenerator:
+  - name: app-secrets
+    literals:
+      - username=appuser
+```
+
+Avoid committing real credentials in literals or source files. Supply sensitive values through an appropriate secret-management workflow.
+
+### Generate from `.env` Files
+
+Kustomize can read `KEY=value` entries from environment files and generate ConfigMaps or Secrets. List each file under the generator's `envs` field. For example, with `config.env` and `secrets.env` alongside the kustomization file:
+
+```dotenv
+# config.env
+APP_MODE=production
+LOG_LEVEL=info
+```
+
+```dotenv
+# secrets.env — keep this file out of version control
+DB_USERNAME=appuser
+DB_PASSWORD=replace-with-a-secret
+```
+
+```yaml
+# kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+configMapGenerator:
+  - name: app-config
+    envs:
+      - config.env
+secretGenerator:
+  - name: app-secrets
+    envs:
+      - secrets.env
+```
+
+Render the generated resources or apply them to the current cluster context:
+
+```bash
+kubectl kustomize ./k8s
+kubectl apply -k ./k8s
+```
+
+Generated names include a content hash by default. Kustomize updates references to those generated resources in supported Kubernetes fields, which can trigger a workload rollout when the file contents change. Treat generated Secret manifests as sensitive: the values are encoded in the YAML output, not encrypted.
+
+### Bases and Overlays
+
+Use a base for shared resources and overlays for environment-specific changes. Each directory has its own `kustomization.yaml`:
+
+```text
+k8s/
+├── base/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   └── kustomization.yaml
+└── overlays/
+    ├── staging/
+    │   └── kustomization.yaml
+    └── production/
+        └── kustomization.yaml
+```
+
+An overlay includes the base and describes only its differences:
+
+```yaml
+# overlays/production/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+namespace: production
+replicas:
+  - name: web
+    count: 3
+images:
+  - name: nginx
+    newTag: "1.27"
+```
+
+Build or apply one environment by naming its overlay directory, such as `kubectl apply -k k8s/overlays/production`. Kustomize also supports targeted patches when an overlay needs to change selected fields in a resource.
 
 ## Helm Package Manager
 

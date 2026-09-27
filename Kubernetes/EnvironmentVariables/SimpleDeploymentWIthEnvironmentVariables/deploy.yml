@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-deployment
+  labels:
+    app: simple-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          env:
+            - name: POSTGRES_USER
+              value: "admin"
+            - name: POSTGRES_PASSWORD
+              value: "password"
+            - name: POSTGRES_DB
+              value: "mydatabase"
+
+          image: postgres:latest
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: simple-deployment-service
+  labels:
+    app: simple-deployment
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres # Use the same template > metadata > labels > app value from the deployment.yaml file
+  ports:
+    - port: 5432
+      targetPort: 5432

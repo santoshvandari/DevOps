@@ -1,0 +1,12 @@
+# kubectl apply -f SimplePodCreation.yml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-simple-pod
+  labels:
+    env: dev
+spec:
+  containers:
+    - name: nginx-container
+      image: nginx:latest

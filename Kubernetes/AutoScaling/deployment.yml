@@ -1,0 +1,107 @@
+# Demonstration manifest for a Deployment, ClusterIP Service, and HPA.
+# PostgreSQL is stateful: scaling this Deployment creates independent database
+# instances, not a coordinated PostgreSQL cluster. Use a stateless workload for
+# a typical HPA demo, or use a database operator/StatefulSet design for PostgreSQL.
+
+# kubectl apply -f deployment.yml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-deployment
+  labels:
+    app: simple-deployment
+spec:
+  replicas: 1 # Initial desired count; the HPA can change this between 1 and 3.
+  selector:
+    matchLabels:
+      app: postgres # Must match the pod template labels below.
+  template:
+    metadata:
+      labels:
+        app: postgres # Used by both the Deployment selector and the Service.
+    spec:
+      containers:
+        - name: postgres
+          env:
+            - name: POSTGRES_USER
+              value: "admin"
+            - name: POSTGRES_PASSWORD
+              value: "password"
+            - name: POSTGRES_DB
+              value: "mydatabase"
+          image: postgres:latest
+          resources:
+            # HPA utilization targets are calculated as a percentage of requests.
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            # Limits cap the resources a container can consume.
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+# Internal service: sends traffic to pods carrying the app=postgres label.
+apiVersion: v1
+kind: Service
+metadata:
+  name: simple-deployment-service
+  labels:
+    app: simple-deployment
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres # Must match the Deployment's pod template label.
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+---
+# HPA adjusts the Deployment's replica count using resource metrics.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: myapp-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: simple-deployment # Must match the Deployment metadata.name.
+  minReplicas: 1 # HPA will not scale below this count.
+  maxReplicas: 3 # HPA will not scale above this count.
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # Aim for average CPU use near 80% of the requested CPU across pods.
+          averageUtilization: 80
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          # Aim for average memory use near 80% of the requested memory.
+          averageUtilization: 80
+  # When several metrics are set, HPA uses the metric recommending more replicas.
+  behavior:
+    scaleUp:
+      # No stabilization delay when scaling up; respond to the latest recommendation.
+      stabilizationWindowSeconds: 0
+      # Choose the policy that permits the largest scale-up.
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100 # Allow up to a 100% increase in replicas per policy period.
+          periodSeconds: 15 # Policy period used to limit the rate of scaling.
+    scaleDown:
+      # Use recommendations from the last 5 minutes to avoid scaling down too quickly.
+      stabilizationWindowSeconds: 300
+      # Choose the policy that permits the smallest scale-down.
+      selectPolicy: Min
+      policies:
+        - type: Percent
+          value: 100 # Allow a reduction of up to 100% per policy period, within minReplicas.
+          periodSeconds: 15 # Policy period used to limit the rate of scaling.

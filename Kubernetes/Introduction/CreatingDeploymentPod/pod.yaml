@@ -1,0 +1,26 @@
+# kubectl apply -f SimplePodCreation.yml
+# kubectl get deploy
+# kubectl get pods
+# kubectl get deploy nginx-deploy
+# kubectl describe deploy nginx-deploy
+# kubectl status deploy nginx-deploy
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deploy
+  labels:
+    app: pod-deployment
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: pod-deployment
+  template:
+    metadata:
+      labels:
+        app: pod-deployment
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:latest

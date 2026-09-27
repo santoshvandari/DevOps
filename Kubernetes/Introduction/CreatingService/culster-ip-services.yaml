@@ -1,0 +1,19 @@
+# For Cluster IP
+# kubectl apply -f services.yaml
+# kubectl get svc
+# kubectl describe svc creating-service
+
+# For Minikube
+# minikube service creating-service
+apiVersion: v1
+kind: Service
+metadata:
+  name: cluster-ip-service
+  labels:
+    app: culster-ip-service
+spec:
+  selector:
+      app: nginx # Use the same template > metadata > labels > app value from the deployment.yaml file
+  ports:
+    - protocol: TCP
+      port: 80
