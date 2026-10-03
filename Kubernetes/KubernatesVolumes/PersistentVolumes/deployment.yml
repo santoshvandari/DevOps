@@ -1,0 +1,69 @@
+# Static PersistentVolume -> PersistentVolumeClaim -> Deployment example.
+# This hostPath example is intended for a single-node learning cluster. On a
+# multi-node cluster, /mnt/data-deployment is local to each node and may differ.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: deployment-volume
+spec:
+  capacity:
+    storage: 10Gi # Advertised capacity used when matching claims; hostPath is not quota-limited.
+  volumeMode: Filesystem # Mount the volume as a filesystem in the container.
+  accessModes:
+    - ReadWriteOnce # Read-write attachment from one node at a time.
+  persistentVolumeReclaimPolicy: Retain # Keep the PV and backing data after its claim is deleted.
+  storageClassName: manual # Match the PVC to this statically created volume.
+  hostPath:
+    path: /mnt/data-deployment # Directory on the Kubernetes node that stores the files.
+
+---
+# A claim requests storage; Kubernetes binds it to a compatible available PV.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: deployment-volume-claim
+spec:
+  accessModes:
+    - ReadWriteOnce # Must be compatible with the PV's access mode.
+  storageClassName: manual # Must match the PV's storage class.
+  resources:
+    requests:
+      storage: 5Gi # Can bind to the 10Gi PV because it requests no more than its capacity.
+
+---
+# The Deployment runs one NGINX Pod and mounts the claim for persistent web content.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-with-persistent-volume
+  labels:
+    app: nginx-with-persistent-volume
+spec:
+  replicas: 1 # Keep one replica for this simple ReadWriteOnce volume example.
+  selector:
+    matchLabels:
+      app: nginx-with-persistent-volume # Must match the Pod template label below.
+  template:
+    metadata:
+      labels:
+        app: nginx-with-persistent-volume # Identifies Pods managed by this Deployment.
+    spec:
+      volumes:
+        - name: web-content # Volume name referenced by the container mount.
+          persistentVolumeClaim:
+            claimName: deployment-volume-claim # Must match the PVC metadata.name above.
+      containers:
+        - name: nginx
+          image: nginx:latest
+          resources:
+            requests:
+              memory: "64Mi" # Amount Kubernetes reserves when scheduling the Pod.
+              cpu: "250m"
+            limits:
+              memory: "128Mi" # Maximum resources this container may use.
+              cpu: "500m"
+          ports:
+            - containerPort: 80 # Port exposed by the NGINX container.
+          volumeMounts:
+            - name: web-content # Must match spec.volumes[].name above.
+              mountPath: /usr/share/nginx/html # Content here is stored on the persistent volume.

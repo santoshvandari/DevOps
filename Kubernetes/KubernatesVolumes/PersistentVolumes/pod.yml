@@ -1,0 +1,60 @@
+# Static PersistentVolume -> PersistentVolumeClaim -> Pod example.
+# This hostPath example is intended for a single-node learning cluster. On a
+# multi-node cluster, /mnt/data is local to each node and may not hold the same data.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pod-volume
+spec:
+  capacity:
+    storage: 10Gi # Advertised capacity used when matching claims; hostPath is not quota-limited.
+  volumeMode: Filesystem # Mount the volume as a filesystem inside the container.
+  accessModes:
+    - ReadWriteOnce # Read-write attachment from one node at a time.
+  persistentVolumeReclaimPolicy: Retain # Keep the PV and backing data after its claim is deleted.
+  storageClassName: manual # Match the PVC to this statically created volume.
+  hostPath:
+    path: /mnt/data # Directory on the Kubernetes node that stores the files.
+
+---
+# A claim requests storage; Kubernetes binds it to a compatible available PV.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pod-volume-claim
+spec:
+  accessModes:
+    - ReadWriteOnce # Must be compatible with the PV's access mode.
+  storageClassName: manual # Must match the PV's storage class.
+  resources:
+    requests:
+      storage: 5Gi # Can bind to the 10Gi PV because it requests no more than its capacity.
+
+---
+# The Pod refers to the PVC, not directly to the PV.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+  labels:
+    app: nginx-app # Labels identify this Pod for selectors used by other resources.
+spec:
+  volumes:
+    - name: pod-volume-nginx # Volume name referenced by the container mount below.
+      persistentVolumeClaim:
+        claimName: pod-volume-claim # Must match the PVC metadata.name above.
+  containers:
+    - name: nginx-app
+      image: nginx:latest
+      resources:
+        requests:
+          memory: "64Mi" # Amount Kubernetes reserves when scheduling the Pod.
+          cpu: "250m"
+        limits:
+          memory: "128Mi" # Maximum resources this container may use.
+          cpu: "500m"
+      ports:
+        - containerPort: 80 # Port exposed by the NGINX container.
+      volumeMounts:
+        - name: pod-volume-nginx # Must match the volume name under Pod spec.volumes.
+          mountPath: /usr/share/nginx/html # Files in this directory are stored on the PV.

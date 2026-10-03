@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  volumes:
+    - name: ephemeral-volume
+      emptyDir: {}
+  containers:
+    - name: nginx
+      image: nginx:latest
+      resources:
+        limits:
+          memory: "128Mi"
+          cpu: "500m"
+        requests:
+          memory: "64Mi"
+          cpu: "250m"
+      volumes:
+        - name: ephemeral-volume
+          mountPath: /usr/share/nginx/html
+
+      ports:
+        - containerPort: 80

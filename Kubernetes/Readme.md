@@ -412,6 +412,11 @@ kubectl get secret app-secrets -o jsonpath='{.data.username}' | base64 -d
 ## Volumes and Storage
 
 ### Persistent Volume (PV) and Persistent Volume Claim (PVC)
+
+A **PersistentVolume (PV)** represents storage available to a cluster. A **PersistentVolumeClaim (PVC)** is a namespaced request for storage; a Pod uses the PVC rather than referring directly to a PV. Kubernetes binds a claim to a compatible volume based on requested capacity, access mode, and storage class. PVCs remain after Pods are deleted, which lets replacement Pods use the same claim and retain data.
+
+The example below creates a static, local `hostPath` PV and a PVC that requests 5 GiB from it. `hostPath` is for local learning and testing; it uses a directory on a cluster node and is not suitable as shared or resilient production storage. In a multi-node cluster, use a storage provider and StorageClass designed for the workload.
+
 ```yaml
 # persistent-volume.yaml
 apiVersion: v1
@@ -442,7 +447,12 @@ spec:
   storageClassName: manual
 ```
 
-### Using PVC in Deployment
+Here, `ReadWriteOnce` requests read-write mounting from one node at a time; it does not necessarily mean only one Pod can use the volume on that node. Access modes are used for matching and mounting behavior, not as general write-protection or filesystem locking. The PVC asks for 5 GiB and matches the 10 GiB PV because the volume has at least the requested capacity. Both objects use `storageClassName: manual` to match this statically created volume.
+
+### Using a PVC in a Deployment
+
+The Pod template references the PVC by name. The volume is mounted into the container at `mountPath`:
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -469,6 +479,49 @@ spec:
         persistentVolumeClaim:
           claimName: pvc-storage
 ```
+
+The `volumeMounts[].name` must match the `volumes[].name`, and `claimName` must match the PVC in the same namespace as the Pod. Files written under `/usr/share/nginx/html` are stored on the mounted volume and remain there when the Pod is replaced. If multiple replicas use the same claim, make sure the storage provider's access mode and the application support that pattern.
+
+### StorageClasses and Dynamic Provisioning
+
+A StorageClass describes a storage provisioner and its options. Many clusters have a default StorageClass that automatically creates a PV when a PVC requests storage. With dynamic provisioning, a PVC can request a class without a matching static PV; omit `storageClassName` to use the cluster default, or name a class explicitly. The available classes and behavior depend on the cluster's storage driver:
+
+```bash
+# See storage classes and the claim/volume binding state
+kubectl get storageclass
+kubectl get pvc
+kubectl get pv
+kubectl describe pvc pvc-storage
+```
+
+A PVC stuck in `Pending` may have no matching PV, request an unavailable StorageClass or access mode, or be waiting for a Pod to be scheduled before provisioning. Check the PVC's events with `kubectl describe pvc <claim-name>`.
+
+### Deleting Claims and Cleaning Up Storage
+
+Deleting a Pod or Deployment does **not** delete the PVC or clear its data. A PVC can be used again by another Pod. Deleting the PVC releases its PV, and what happens to the underlying storage depends on the PV's reclaim policy:
+
+- **`Retain`** (used by the example): the PV and backing data are kept. The PV becomes `Released` and is not automatically available to another claim. An administrator must inspect and manually reclaim or remove it.
+- **`Delete`**: when supported by the storage driver, deleting the PVC also removes the PV and the backing storage asset. Dynamically provisioned volumes often inherit `Delete` from their StorageClass, so check the policy before deleting a claim that may contain important data.
+
+Inspect the binding and reclaim policy before cleanup:
+
+```bash
+kubectl get pvc pvc-storage
+kubectl get pv pv-storage
+kubectl describe pv pv-storage
+```
+
+For this example, remove the workload first, then the claim. Because the PV uses `Retain`, the PV and data remain for manual handling:
+
+```bash
+kubectl delete deployment webapp
+kubectl delete pvc pvc-storage
+kubectl get pv pv-storage # Expect Released while the retained volume awaits manual reclamation.
+```
+
+Deleting the PV object alone does not guarantee that data on the storage backend is erased. To permanently clear retained data, follow the storage provider's cleanup process and verify which backing volume or host directory is involved. Avoid deleting or formatting a backing volume until its contents and consumers have been checked. For disposable learning data, use a dedicated test volume and clean it through the appropriate host or storage-provider tools.
+
+For details, see Kubernetes documentation on [Persistent Volumes and reclaim policies](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) and [StorageClasses](https://kubernetes.io/docs/concepts/storage/storage-classes/).
 
 ## Ingress and Load Balancing
 
